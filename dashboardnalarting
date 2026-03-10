@@ -1,0 +1,556 @@
+# Method of Procedure (MOP)
+
+## Kubernetes Monitoring & Alerting using Prometheus and Grafana
+
+---
+
+# 1. Objective
+
+This document provides a **step-by-step procedure** to configure **Kubernetes monitoring and alerting** using **Prometheus and Grafana**, including:
+
+* Accessing Grafana and Prometheus
+* Creating Grafana dashboards
+* Monitoring Pod CPU, Memory, Network, and Storage metrics
+* Detecting Pod restarts
+* Configuring alert rules
+* Sending alert notifications via **SMTP email**
+
+The procedure assumes:
+
+* Prometheus and Grafana are already installed in the Kubernetes cluster
+* User has **kubectl access**
+* Grafana Admin access is available
+
+---
+
+# 2. Environment Prerequisites
+
+Ensure the following access and tools are available.
+
+### 2.1 Kubernetes Access
+
+You must have access to the cluster.
+
+Verify using:
+
+```bash
+kubectl get nodes
+```
+
+Check namespaces:
+
+```bash
+kubectl get ns
+```
+
+---
+
+### 2.2 Monitoring Namespace
+
+Most monitoring stacks run in:
+
+```
+monitoring namespace
+```
+
+Verify monitoring components:
+
+```bash
+kubectl get pods -n monitoring
+```
+
+Example output:
+
+```
+prometheus-grafana-0
+prometheus-server
+prometheus-alertmanager
+```
+
+---
+
+### 2.3 Verify Prometheus Metrics
+
+Open Prometheus UI:
+
+```
+http://<prometheus-url>
+```
+
+Go to:
+
+```
+Status → Targets
+```
+
+Ensure targets are **UP**.
+
+Test metrics in Prometheus query console:
+
+```
+kube_pod_container_status_restarts_total
+```
+
+If metrics appear → Prometheus is working.
+
+---
+
+# 3. Accessing Grafana
+
+Open Grafana UI:
+
+```
+http://<grafana-url>
+```
+
+Login using:
+
+```
+Admin credentials
+```
+
+Verify Prometheus datasource:
+
+```
+Connections → Data Sources → Prometheus
+```
+
+Datasource should be **Healthy**.
+
+---
+
+# 4. Creating a Custom Grafana Dashboard
+
+## Step 1 — Create Dashboard
+
+In Grafana:
+
+```
+Dashboards → New → New Dashboard
+```
+
+Click:
+
+```
+Add Visualization
+```
+
+Select datasource:
+
+```
+Prometheus
+```
+
+---
+
+# 5. Pod Resource Monitoring Panels
+
+## 5.1 CPU Usage by Pod
+
+Add query:
+
+```promql
+sum(rate(container_cpu_usage_seconds_total{container!="POD"}[2m])) by (namespace,pod)
+```
+
+Set visualization:
+
+```
+Time Series
+```
+
+Title:
+
+```
+Pod CPU Usage
+```
+
+---
+
+## 5.2 Memory Usage by Pod
+
+Query:
+
+```promql
+sum(container_memory_usage_bytes{container!="POD"}) by (namespace,pod)
+```
+
+Title:
+
+```
+Pod Memory Usage
+```
+
+---
+
+## 5.3 Network Traffic
+
+Query:
+
+```promql
+sum(rate(container_network_receive_bytes_total[2m])) by (namespace,pod)
+```
+
+Title:
+
+```
+Pod Network Receive Traffic
+```
+
+For transmit traffic:
+
+```promql
+sum(rate(container_network_transmit_bytes_total[2m])) by (namespace,pod)
+```
+
+---
+
+## 5.4 Node Storage Usage
+
+Query:
+
+```promql
+(node_filesystem_size_bytes - node_filesystem_free_bytes) 
+/ node_filesystem_size_bytes
+```
+
+Title:
+
+```
+Node Disk Usage %
+```
+
+---
+
+## 5.5 Pod Restart Counter
+
+Query:
+
+```promql
+kube_pod_container_status_restarts_total
+```
+
+To filter namespaces:
+
+```promql
+sum by(namespace,pod)(
+increase(kube_pod_container_status_restarts_total{
+namespace=~"namespace1|namespace2"
+}[20m]))
+```
+
+Title:
+
+```
+Pod Restart Counter
+```
+
+---
+
+# 6. Saving Dashboard
+
+Click:
+
+```
+Save Dashboard
+```
+
+Provide name:
+
+```
+Kubernetes Pod Monitoring
+```
+
+---
+
+# 7. Creating Alert Rules
+
+Navigate:
+
+```
+Alerting → Alert Rules
+```
+
+Click:
+
+```
+New Alert Rule
+```
+
+---
+
+## 7.1 Pod Restart Alert
+
+Query:
+
+```promql
+sum by(namespace,pod)(
+increase(kube_pod_container_status_restarts_total{
+namespace=~"osdp-cadmp-global-services-services-staging|osdp-cadmp-internal-services-development"
+}[2m]))
+```
+
+Alert condition:
+
+```
+last() of A > 0
+```
+
+Evaluation settings:
+
+```
+Evaluation Interval: 10s
+```
+
+Alert name:
+
+```
+CADMP Pod Restart Alert
+```
+
+Save rule.
+
+---
+
+# 8. Configuring Email Alert Notifications
+
+Grafana requires SMTP configuration.
+
+SMTP relay used:
+
+```
+mailrelay.int.nokia.com
+Port: 25
+```
+
+---
+
+# 9. Configure SMTP in Grafana
+
+Edit Grafana ConfigMap.
+
+```
+kubectl edit configmap prometheus-grafana -n monitoring
+```
+
+Locate section:
+
+```
+grafana.ini
+```
+
+Add SMTP configuration:
+
+```
+[smtp]
+enabled = true
+host = mailrelay.int.organization.com:25 or 587
+from_address = grafana@organization.com
+from_name = Grafana Alerts
+skip_verify = true
+```
+
+Save and exit.
+
+---
+
+# 10. Restart Grafana
+
+Grafana runs as StatefulSet.
+
+Delete pod:
+
+```
+kubectl delete pod prometheus-grafana-0 -n monitoring
+```
+
+Kubernetes automatically recreates the pod.
+
+Verify:
+
+```
+kubectl get pods -n monitoring
+```
+
+Wait until:
+
+```
+prometheus-grafana-0 Running
+```
+
+---
+
+# 11. Configure Email Contact Point
+
+In Grafana UI:
+
+```
+Alerting → Contact Points
+```
+
+Edit:
+
+```
+grafana_default_email
+```
+
+Add recipient email:
+
+```
+rajdip.roy@nokia.com
+```
+
+Save.
+
+---
+
+# 12. Configure Notification Policy
+
+Navigate:
+
+```
+Alerting → Notification Policies
+```
+
+Ensure default policy routes alerts to:
+
+```
+grafana_default_email
+```
+
+---
+
+# 13. Testing Alert
+
+Restart a pod manually.
+
+Example:
+
+```
+kubectl exec -it <pod-name> -n <namespace> -- kill 1
+```
+
+Check pod status:
+
+```
+kubectl get pods -n <namespace>
+```
+
+The restart counter increases.
+
+---
+
+# 14. Verify Alert Trigger
+
+In Grafana:
+
+```
+Alerting → Alert Rules
+```
+
+Alert state transitions:
+
+```
+Normal → Pending → Firing
+```
+
+---
+
+# 15. Verify Email Delivery
+
+Email should arrive within:
+
+```
+30–60 seconds
+```
+
+Check inbox or spam folder.
+
+---
+
+# 16. Useful Operational Commands
+
+Check Grafana logs:
+
+```
+kubectl logs prometheus-grafana-0 -n monitoring
+```
+
+Check Prometheus pods:
+
+```
+kubectl get pods -n monitoring
+```
+
+Check metrics directly:
+
+```
+kubectl top pods -n <namespace>
+```
+
+Check restart count:
+
+```
+kubectl get pods -n <namespace>
+```
+
+---
+
+# 17. Recommended Production Alerts
+
+Create additional alerts for:
+
+### High CPU
+
+```
+sum(rate(container_cpu_usage_seconds_total[2m])) by (pod) > 0.8
+```
+
+### High Memory
+
+```
+sum(container_memory_usage_bytes) by (pod) 
+/ sum(container_spec_memory_limit_bytes) by (pod) > 0.9
+```
+
+### High Disk Usage
+
+```
+(node_filesystem_size_bytes - node_filesystem_free_bytes) / node_filesystem_size_bytes > 0.8
+```
+
+---
+
+# 18. Final Monitoring Architecture
+
+```
+Kubernetes Pods
+      ↓
+Node Exporter / kube-state-metrics
+      ↓
+Prometheus
+      ↓
+Grafana Dashboards
+      ↓
+Alert Rules
+      ↓
+SMTP Relay
+      ↓
+Email Notification
+```
+
+---
+
+# 19. Outcome
+
+After completing this procedure, the system will provide:
+
+* Real-time **Kubernetes resource monitoring**
+* Pod-level metrics visualization
+* Automatic **pod failure detection**
+* Threshold-based alerting
+* **Email notification for operational incidents**
+
+---
+
+# End of Document
